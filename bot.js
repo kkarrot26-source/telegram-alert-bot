@@ -16,8 +16,8 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHAT_ID   = process.env.CHAT_ID;
 const PORT      = process.env.PORT || 4000;
 
-const REPEAT_COUNT    = 5;
-const REPEAT_DELAY_MS = 5_000; // 5 seconds between each message
+const REPEAT_COUNT    = 7;
+const REPEAT_DELAY_MS = 3_000; // 3 seconds between each message
 
 if (!BOT_TOKEN || !CHAT_ID) {
   console.error('ERROR: BOT_TOKEN and CHAT_ID must be set in .env');
