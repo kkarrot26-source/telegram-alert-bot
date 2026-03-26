@@ -1,0 +1,12 @@
+{
+  "name": "telegram-alert-bot",
+  "version": "1.0.0",
+  "description": "Sends 5 Telegram messages with 10s gaps when a TradingView alert fires",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}
