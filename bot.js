@@ -12,9 +12,10 @@ if (fs.existsSync(envFile)) {
 
 const express = require('express');
 
-const BOT_TOKEN = process.env.BOT_TOKEN;
-const CHAT_ID   = process.env.CHAT_ID;
-const PORT      = process.env.PORT || 4000;
+const BOT_TOKEN  = process.env.BOT_TOKEN;
+const CHAT_ID    = process.env.CHAT_ID;
+const PORT       = process.env.PORT || 4000;
+const LOG_FILE   = path.join(__dirname, 'alerts-log.json');
 
 const REPEAT_COUNT    = 7;
 const REPEAT_DELAY_MS = 3_000; // 3 seconds between each message
@@ -26,6 +27,38 @@ if (!BOT_TOKEN || !CHAT_ID) {
 
 const app = express();
 app.use(express.json());
+
+// ── Alert log (persisted to alerts-log.json) ──────────────────────────────────
+// pairTargets tracks how many alerts each pair has received this session.
+// We restore counts from the log on startup so Target numbers survive restarts.
+const pairTargets = {}; // { "BTCUSDT": 2, "ETHUSDT": 1, ... }
+
+function readLog() {
+  try { return JSON.parse(fs.readFileSync(LOG_FILE, 'utf8')); } catch { return []; }
+}
+
+function appendLog(entry) {
+  const log = readLog();
+  log.push(entry);
+  fs.writeFileSync(LOG_FILE, JSON.stringify(log, null, 2));
+}
+
+// Restore per-pair counts from existing log so numbering continues correctly.
+(function restoreCounts() {
+  for (const entry of readLog()) {
+    if (entry.pair) {
+      pairTargets[entry.pair] = Math.max(pairTargets[entry.pair] || 0, entry.targetNumber);
+    }
+  }
+  console.log('[Log] Restored pair target counts:', pairTargets);
+})();
+
+// Try to extract a trading pair from the message text.
+// Matches patterns like BTCUSDT, BTC/USDT, BTC-USD, btcusdt, etc.
+function extractPair(message) {
+  const m = message.match(/\b([A-Za-z]{2,6}[\/\-]?[A-Za-z]{2,6})\b/);
+  return m ? m[1].toUpperCase().replace(/[-\/]/, '') : null;
+}
 
 // ── Telegram helper ───────────────────────────────────────────────────────────
 async function sendTelegram(text) {
@@ -45,13 +78,18 @@ function delay(ms) {
 }
 
 // Send REPEAT_COUNT messages with REPEAT_DELAY_MS between each.
-// Runs in the background — does not block the webhook response.
-async function sendBurst(message) {
-  console.log(`[Burst] Starting — will send ${REPEAT_COUNT} messages for: "${message}"`);
+async function sendBurst(message, pair, targetLabel) {
+  console.log(`[Burst] Starting ${REPEAT_COUNT} messages — ${pair} ${targetLabel}: "${message}"`);
   for (let i = 1; i <= REPEAT_COUNT; i++) {
     try {
-      await sendTelegram(`🚨 Alert ${i}/${REPEAT_COUNT}\n\n${message}`);
-      console.log(`[Burst] Sent message ${i}/${REPEAT_COUNT}`);
+      const text = [
+        `🚨 ${pair} — ${targetLabel}`,
+        `Notification ${i}/${REPEAT_COUNT}`,
+        ``,
+        message,
+      ].join('\n');
+      await sendTelegram(text);
+      console.log(`[Burst] Sent ${i}/${REPEAT_COUNT}`);
     } catch (err) {
       console.error(`[Burst] Failed to send message ${i}: ${err.message}`);
     }
@@ -61,26 +99,90 @@ async function sendBurst(message) {
 }
 
 // ── Webhook endpoint ──────────────────────────────────────────────────────────
+// Expected body: { "message": "...", "pair": "BTCUSDT" }
+// "pair" is optional — falls back to auto-detection from the message text.
 app.post('/webhook', (req, res) => {
-  const { message } = req.body || {};
+  const { message, pair: pairField } = req.body || {};
   if (!message || typeof message !== 'string') {
     return res.status(400).json({ error: 'Missing or invalid "message" field' });
   }
 
-  console.log(`[Webhook] Received: "${message}"`);
+  const pair = (pairField || extractPair(message) || 'UNKNOWN').toUpperCase();
+
+  // Increment target count for this pair
+  pairTargets[pair] = (pairTargets[pair] || 0) + 1;
+  const targetNumber = pairTargets[pair];
+  const targetLabel  = `Target ${targetNumber}`;
+
+  const entry = {
+    timestamp:    new Date().toISOString(),
+    pair,
+    targetNumber,
+    targetLabel,
+    message,
+  };
+  appendLog(entry);
+
+  console.log(`[Webhook] ${pair} ${targetLabel}: "${message}"`);
 
   // Respond immediately so TradingView doesn't time out
-  res.json({ status: 'ok', queued: REPEAT_COUNT });
+  res.json({ status: 'ok', pair, targetLabel, queued: REPEAT_COUNT });
 
-  // Fire and forget the burst
-  sendBurst(message).catch(err => console.error('[Burst] Unhandled error:', err));
+  sendBurst(message, pair, targetLabel).catch(err =>
+    console.error('[Burst] Unhandled error:', err)
+  );
+});
+
+// ── Log viewer ────────────────────────────────────────────────────────────────
+app.get('/log', (_req, res) => {
+  const log = readLog();
+  const rows = log
+    .slice()
+    .reverse()
+    .map(e => `
+      <tr>
+        <td>${new Date(e.timestamp).toLocaleString()}</td>
+        <td><strong>${e.pair}</strong></td>
+        <td>${e.targetLabel}</td>
+        <td>${e.message}</td>
+      </tr>`)
+    .join('');
+
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Alert Log</title>
+  <style>
+    body { font-family: -apple-system, sans-serif; background: #0f0f13; color: #e8e8f0; padding: 1.5rem; }
+    h1   { color: #7c6aff; font-size: 1.1rem; margin-bottom: 1rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+    th   { text-align: left; color: #888; border-bottom: 1px solid #2e2e42; padding: 0.4rem 0.6rem; }
+    td   { padding: 0.45rem 0.6rem; border-bottom: 1px solid #1e1e2e; word-break: break-word; }
+    tr:hover td { background: #1a1a24; }
+    .t1  { color: #00c896; }
+    .t2  { color: #7c6aff; }
+    .other { color: #ff9944; }
+  </style>
+</head>
+<body>
+  <h1>Alert Log — ${log.length} total</h1>
+  <table>
+    <thead><tr><th>Time</th><th>Pair</th><th>Target</th><th>Message</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="4" style="color:#555;padding:1rem">No alerts yet.</td></tr>'}</tbody>
+  </table>
+  <script>setTimeout(()=>location.reload(), 15000)</script>
+</body>
+</html>`);
 });
 
 // ── Health check ──────────────────────────────────────────────────────────────
-app.get('/health', (_req, res) => res.json({ status: 'running' }));
+app.get('/health', (_req, res) => res.json({ status: 'running', pairTargets }));
 
 app.listen(PORT, () => {
   console.log(`Telegram Alert Bot running on http://localhost:${PORT}`);
   console.log(`Webhook endpoint: POST http://localhost:${PORT}/webhook`);
+  console.log(`Alert log:        GET  http://localhost:${PORT}/log`);
   console.log(`Chat ID: ${CHAT_ID}`);
 });
