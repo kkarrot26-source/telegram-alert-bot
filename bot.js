@@ -156,25 +156,45 @@ app.get('/log', (_req, res) => {
   <title>Alert Log</title>
   <style>
     body { font-family: -apple-system, sans-serif; background: #0f0f13; color: #e8e8f0; padding: 1.5rem; }
-    h1   { color: #7c6aff; font-size: 1.1rem; margin-bottom: 1rem; }
+    h1   { color: #7c6aff; font-size: 1.1rem; margin-bottom: 0.6rem; }
+    .toolbar { display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; }
+    .count { color: #888; font-size: 0.85rem; }
+    button { background: #ff4455; color: #fff; border: none; border-radius: 6px; padding: 0.4rem 1rem; font-size: 0.85rem; cursor: pointer; }
+    button:active { opacity: 0.8; }
     table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
     th   { text-align: left; color: #888; border-bottom: 1px solid #2e2e42; padding: 0.4rem 0.6rem; }
     td   { padding: 0.45rem 0.6rem; border-bottom: 1px solid #1e1e2e; word-break: break-word; }
     tr:hover td { background: #1a1a24; }
-    .t1  { color: #00c896; }
-    .t2  { color: #7c6aff; }
-    .other { color: #ff9944; }
   </style>
 </head>
 <body>
-  <h1>Alert Log — ${log.length} total</h1>
+  <h1>Alert Log</h1>
+  <div class="toolbar">
+    <span class="count">${log.length} alerts</span>
+    <button onclick="resetLog()">Reset Log</button>
+  </div>
   <table>
     <thead><tr><th>Time</th><th>Pair</th><th>Target</th><th>Message</th></tr></thead>
     <tbody>${rows || '<tr><td colspan="4" style="color:#555;padding:1rem">No alerts yet.</td></tr>'}</tbody>
   </table>
-  <script>setTimeout(()=>location.reload(), 15000)</script>
+  <script>
+    setTimeout(() => location.reload(), 15000);
+    function resetLog() {
+      if (!confirm('Clear all alerts? This cannot be undone.')) return;
+      fetch('/log/reset', { method: 'POST' })
+        .then(() => location.reload());
+    }
+  </script>
 </body>
 </html>`);
+});
+
+// ── Reset log ─────────────────────────────────────────────────────────────────
+app.post('/log/reset', (_req, res) => {
+  fs.writeFileSync(LOG_FILE, '[]');
+  for (const key of Object.keys(pairTargets)) delete pairTargets[key];
+  console.log('[Log] Reset by user');
+  res.json({ status: 'cleared' });
 });
 
 // ── Health check ──────────────────────────────────────────────────────────────
