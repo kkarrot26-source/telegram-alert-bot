@@ -17,7 +17,7 @@ const CHAT_ID    = process.env.CHAT_ID;
 const PORT       = process.env.PORT || 4000;
 const LOG_FILE   = path.join(__dirname, 'alerts-log.json');
 
-const REPEAT_COUNT    = 7;
+const REPEAT_COUNT    = 10;
 const REPEAT_DELAY_MS = 3_000; // 3 seconds between each message
 
 if (!BOT_TOKEN || !CHAT_ID) {
